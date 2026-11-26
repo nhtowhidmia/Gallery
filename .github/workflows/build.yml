@@ -42,7 +42,9 @@ jobs:
           EOF
           cat > $D/PhoneMediaPlugin.java <<'EOF'
           package com.galleryai.app;
+          import android.content.ClipData;
           import android.content.ContentUris;
+          import android.content.ContentValues;
           import android.content.Intent;
           import android.content.pm.PackageManager;
           import android.content.pm.ResolveInfo;
@@ -66,6 +68,7 @@ jobs:
           import com.getcapacitor.annotation.PermissionCallback;
           import com.getcapacitor.PluginMethod;
           import java.io.ByteArrayOutputStream;
+          import java.io.OutputStream;
           @CapacitorPlugin(name = "PhoneMedia", permissions = {
             @Permission(alias = "media33", strings = {"android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO"}),
             @Permission(alias = "media", strings = {"android.permission.READ_EXTERNAL_STORAGE"})
@@ -96,7 +99,7 @@ jobs:
               call.resolve(r);
             }
             private void query(Uri uri, String kind, int limit, JSArray arr) {
-              String[] cols = {MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.SIZE, "datetaken", MediaStore.MediaColumns.DATE_ADDED};
+              String[] cols = {MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.SIZE, "datetaken", MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns._ID};
               Cursor c = getContext().getContentResolver().query(uri, cols, null, null, MediaStore.MediaColumns.DATE_ADDED + " DESC");
               if (c == null) return;
               try {
@@ -108,6 +111,7 @@ jobs:
                   o.put("size", c.getLong(2));
                   o.put("taken", c.getLong(3));
                   o.put("added", c.getLong(4));
+                  o.put("id", c.getLong(5));
                   o.put("kind", kind);
                   arr.put(o);
                   n++;
@@ -220,9 +224,104 @@ jobs:
                 call.reject("no app");
               }
             }
+            private Uri mediaUri(PluginCall call) throws Exception {
+              long id = call.getData().getLong("id");
+              boolean vid = "video".equals(call.getString("kind"));
+              Uri base = vid ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+              return ContentUris.withAppendedId(base, id);
+            }
+            @PluginMethod
+            public void shareMedia(PluginCall call) {
+              try {
+                Uri u = mediaUri(call);
+                boolean vid = "video".equals(call.getString("kind"));
+                Intent s = new Intent(Intent.ACTION_SEND);
+                s.setType(vid ? "video/*" : "image/*");
+                s.putExtra(Intent.EXTRA_STREAM, u);
+                s.setClipData(ClipData.newRawUri("", u));
+                s.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                Intent ch = Intent.createChooser(s, "Share");
+                ch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(ch);
+                call.resolve();
+              } catch (Exception e) {
+                call.reject("cannot share");
+              }
+            }
+            @PluginMethod
+            public void deleteMedia(PluginCall call) {
+              try {
+                Uri u = mediaUri(call);
+                int n = getContext().getContentResolver().delete(u, null, null);
+                if (n > 0) call.resolve(); else call.reject("failed");
+              } catch (SecurityException e) {
+                call.reject("access");
+              } catch (Exception e) {
+                call.reject("failed");
+              }
+            }
+            @PluginMethod
+            public void saveImage(PluginCall call) {
+              try {
+                byte[] b = Base64.decode(call.getString("data"), Base64.DEFAULT);
+                ContentValues v = new ContentValues();
+                v.put(MediaStore.MediaColumns.DISPLAY_NAME, "GalleryAI_" + System.currentTimeMillis() + ".jpg");
+                v.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
+                if (Build.VERSION.SDK_INT >= 29) v.put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/Gallery AI");
+                Uri u = getContext().getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, v);
+                OutputStream o = getContext().getContentResolver().openOutputStream(u);
+                o.write(b);
+                o.close();
+                call.resolve();
+              } catch (Exception e) {
+                call.reject("save failed");
+              }
+            }
           }
           EOF
           sed -i 's#<application#<uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/><uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/><uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/><uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/><uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/><application#' android/app/src/main/AndroidManifest.xml
+      - name: Set app icon and fast splash
+        run: |
+          pip install pillow
+          S=android/app/src/main/res/values/styles.xml
+          sed -i 's/Theme.AppCompat.DayNight\./Theme.AppCompat./g' $S
+          sed -i 's|<style name="AppTheme.NoActionBar" parent="[^"]*">|&<item name="android:statusBarColor">#0b0c10</item><item name="android:navigationBarColor">#0b0c10</item>|' $S
+          python3 - <<'EOF'
+          from PIL import Image, ImageDraw, ImageFilter
+          R = 'android/app/src/main/res/'
+          src = Image.open('icon.png').convert('RGB')
+          W, H = src.size
+          px = [src.getpixel(p) for p in [(4, 4), (W - 5, 4), (4, H - 5), (W - 5, H - 5)]]
+          bg = tuple(sum(c[i] for c in px) // 4 for i in range(3))
+          hexbg = '#%02x%02x%02x' % bg
+          dens = {'mdpi': (48, 108), 'hdpi': (72, 162), 'xhdpi': (96, 216), 'xxhdpi': (144, 324), 'xxxhdpi': (192, 432)}
+          for d, (a, f) in dens.items():
+              p = R + 'mipmap-' + d + '/'
+              sq = src.resize((a, a), Image.LANCZOS)
+              sq.save(p + 'ic_launcher.png')
+              m = Image.new('L', (a * 4, a * 4), 0)
+              ImageDraw.Draw(m).ellipse((0, 0, a * 4 - 1, a * 4 - 1), fill=255)
+              rd = sq.convert('RGBA')
+              rd.putalpha(m.resize((a, a), Image.LANCZOS))
+              rd.save(p + 'ic_launcher_round.png')
+              s = int(f * 0.88)
+              im = src.resize((s, s), Image.LANCZOS).convert('RGBA')
+              mk = Image.new('L', (s, s), 0)
+              ImageDraw.Draw(mk).rectangle((s // 12, s // 12, s - s // 12, s - s // 12), fill=255)
+              im.putalpha(mk.filter(ImageFilter.GaussianBlur(s // 14)))
+              fg = Image.new('RGBA', (f, f), bg + (255,))
+              fg.alpha_composite(im, ((f - s) // 2, (f - s) // 2))
+              fg.save(p + 'ic_launcher_foreground.png')
+          open(R + 'values/ic_launcher_background.xml', 'w').write('<?xml version="1.0" encoding="utf-8"?><resources><color name="ic_launcher_background">' + hexbg + '</color></resources>')
+          sh = '<?xml version="1.0" encoding="utf-8"?><shape xmlns:android="http://schemas.android.com/apk/res/android"><solid android:color="%s"/></shape>'
+          import glob, os
+          for f in glob.glob(R + 'drawable*/splash.png'):
+              os.remove(f)
+          os.makedirs(R + 'drawable', exist_ok=True)
+          os.makedirs(R + 'drawable-night', exist_ok=True)
+          open(R + 'drawable/splash.xml', 'w').write(sh % '#0b0c10')
+          open(R + 'drawable-night/splash.xml', 'w').write(sh % '#0b0c10')
+          EOF
       - name: Build APK
         run: |
           cd android
