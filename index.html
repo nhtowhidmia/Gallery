@@ -55,18 +55,18 @@ footer{text-align:center;color:var(--mute);font-size:13px;padding:6px 0 14px}
 <div id="stage"><div id="ring"></div>
   <div id="empty"><b>গ্যালারি খালি</b>উপরের “যোগ করুন” চেপে ফোন থেকে ছবি, ভিডিও বা যেকোনো ফাইল বেছে নিন।</div>
 </div>
-<footer>ঘোরাতে আঙুল টানুন, খুলতে ছবিতে চাপ দিন</footer>
+<footer><div style="margin-bottom:6px"><button class="tab" id="prev">◀ আগের</button> <span id="pg" style="margin:0 8px">1 / 1</span> <button class="tab" id="next">পরের ▶</button></div>ঘোরাতে আঙুল টানুন, খুলতে ছবিতে চাপ দিন</footer>
 <input type="file" id="pick" multiple accept="image/*,video/*,*/*" hidden>
 <div id="view"><div id="vbox"></div><div class="info" id="vinfo"></div><div><button id="vopen">ফাইল খুলুন</button><button id="vclose">বন্ধ করুন</button></div></div>
 <script>
 (function(){
-var items=[],filter="all",angle=0,vel=0,drag=false,moved=0,lastX=0,idle=0;
+var items=[],page=0,PAGE=24,filter="all",angle=0,vel=0,drag=false,moved=0,lastX=0,idle=0;
 var ring=document.getElementById("ring"),empty=document.getElementById("empty"),stage=document.getElementById("stage");
 function kind(f){return f.type.indexOf("image")===0?"image":f.type.indexOf("video")===0?"video":"other"}
 function ext(n){var m=n.split(".");return m.length>1?m.pop().slice(0,4).toUpperCase():"FILE"}
 function list(){return items.filter(function(i){return filter==="all"||i.kind===filter})}
 function render(){
-  var L=list();ring.innerHTML="";
+  var A=list();var pages=Math.max(1,Math.ceil(A.length/PAGE));if(page>=pages)page=pages-1;var L=A.slice(page*PAGE,(page+1)*PAGE);ring.innerHTML="";var pg=document.getElementById("pg");if(pg)pg.textContent=(page+1)+" / "+pages;
   empty.style.display=L.length?"none":"block";
   document.getElementById("count").textContent=items.length?(items.length+" টি আইটেম"):"কিছু যোগ করা হয়নি";
   var n=L.length,step=360/Math.max(n,1),R=Math.max(150,(80/Math.tan(Math.PI/Math.max(n,3)))*1.15);
@@ -109,10 +109,23 @@ pick.onchange=function(){
 document.getElementById("tabs").addEventListener("click",function(e){
   var b=e.target.closest(".tab");if(!b)return;
   Array.prototype.forEach.call(this.children,function(c){c.classList.remove("on")});
-  b.classList.add("on");filter=b.dataset.f;angle=0;render();
+  b.classList.add("on");filter=b.dataset.f;angle=0;page=0;render();
 });
+var isNative=!!(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform());
+document.getElementById("prev").onclick=function(){if(page>0){page--;render()}};
+document.getElementById("next").onclick=function(){page++;render()};
+function loadPhone(){
+  var P=Capacitor.registerPlugin?Capacitor.registerPlugin("PhoneMedia"):Capacitor.Plugins.PhoneMedia;
+  P.getMedia({limit:600}).then(function(r){
+    (r.items||[]).forEach(function(m){items.push({name:m.name||"",size:m.size||0,kind:m.kind,url:Capacitor.convertFileSrc(m.path)})});
+    render();
+  }).catch(function(){
+    empty.innerHTML="<b>অনুমতি পাওয়া যায়নি</b>ফোনের Settings থেকে এই এপকে ছবি ও ভিডিওর অনুমতি দিন।";empty.style.display="block";
+  });
+}
+if(isNative)loadPhone();
 var pal=[["#6c4cff","#00b8d9","#ff6ec4"],["#ff512f","#f09819","#ffd200"],["#0f2027","#2c5364","#3ad59f"],["#141e30","#243b55","#7f5cff"],["#11998e","#38ef7d","#0b486b"],["#ee0979","#ff6a00","#3a1c71"],["#1a2a6c","#b21f1f","#fdbb2d"],["#00c6ff","#0072ff","#a18cd1"]];
-pal.forEach(function(p,k){
+(isNative?[]:pal).forEach(function(p,k){
   var c=document.createElement("canvas");c.width=360;c.height=640;var x=c.getContext("2d");
   var g=x.createLinearGradient(0,0,360,640);g.addColorStop(0,p[0]);g.addColorStop(1,p[1]);x.fillStyle=g;x.fillRect(0,0,360,640);
   for(var i=0;i<5;i++){
