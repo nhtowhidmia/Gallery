@@ -42,10 +42,20 @@ jobs:
           EOF
           cat > $D/PhoneMediaPlugin.java <<'EOF'
           package com.galleryai.app;
+          import android.content.ContentUris;
+          import android.content.Intent;
+          import android.content.pm.PackageManager;
+          import android.content.pm.ResolveInfo;
           import android.database.Cursor;
+          import android.graphics.Bitmap;
+          import android.graphics.Canvas;
+          import android.graphics.drawable.Drawable;
           import android.net.Uri;
           import android.os.Build;
+          import android.os.Environment;
           import android.provider.MediaStore;
+          import android.provider.Settings;
+          import android.util.Base64;
           import com.getcapacitor.JSArray;
           import com.getcapacitor.JSObject;
           import com.getcapacitor.PermissionState;
@@ -55,12 +65,14 @@ jobs:
           import com.getcapacitor.annotation.Permission;
           import com.getcapacitor.annotation.PermissionCallback;
           import com.getcapacitor.PluginMethod;
+          import java.io.ByteArrayOutputStream;
           @CapacitorPlugin(name = "PhoneMedia", permissions = {
             @Permission(alias = "media33", strings = {"android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO"}),
             @Permission(alias = "media", strings = {"android.permission.READ_EXTERNAL_STORAGE"})
           })
           public class PhoneMediaPlugin extends Plugin {
             private String alias() { return Build.VERSION.SDK_INT >= 33 ? "media33" : "media"; }
+
             @PluginMethod
             public void getMedia(PluginCall call) {
               if (getPermissionState(alias()) != PermissionState.GRANTED) {
@@ -84,7 +96,7 @@ jobs:
               call.resolve(r);
             }
             private void query(Uri uri, String kind, int limit, JSArray arr) {
-              String[] cols = {MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.SIZE};
+              String[] cols = {MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.SIZE, "datetaken", MediaStore.MediaColumns.DATE_ADDED};
               Cursor c = getContext().getContentResolver().query(uri, cols, null, null, MediaStore.MediaColumns.DATE_ADDED + " DESC");
               if (c == null) return;
               try {
@@ -94,6 +106,8 @@ jobs:
                   o.put("name", c.getString(0));
                   o.put("path", c.getString(1));
                   o.put("size", c.getLong(2));
+                  o.put("taken", c.getLong(3));
+                  o.put("added", c.getLong(4));
                   o.put("kind", kind);
                   arr.put(o);
                   n++;
@@ -102,9 +116,113 @@ jobs:
                 c.close();
               }
             }
+
+            private String icon(Drawable d) {
+              Bitmap b = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888);
+              Canvas cv = new Canvas(b);
+              d.setBounds(0, 0, 96, 96);
+              d.draw(cv);
+              ByteArrayOutputStream o = new ByteArrayOutputStream();
+              b.compress(Bitmap.CompressFormat.PNG, 100, o);
+              return "data:image/png;base64," + Base64.encodeToString(o.toByteArray(), Base64.NO_WRAP);
+            }
+            @PluginMethod
+            public void getApps(PluginCall call) {
+              PackageManager pm = getContext().getPackageManager();
+              Intent i = new Intent(Intent.ACTION_MAIN, null);
+              i.addCategory(Intent.CATEGORY_LAUNCHER);
+              JSArray arr = new JSArray();
+              for (ResolveInfo r : pm.queryIntentActivities(i, 0)) {
+                try {
+                  JSObject o = new JSObject();
+                  o.put("pkg", r.activityInfo.packageName);
+                  o.put("name", String.valueOf(r.loadLabel(pm)));
+                  o.put("icon", icon(r.loadIcon(pm)));
+                  arr.put(o);
+                } catch (Exception e) { }
+              }
+              JSObject res = new JSObject();
+              res.put("items", arr);
+              call.resolve(res);
+            }
+            @PluginMethod
+            public void launchApp(PluginCall call) {
+              try {
+                Intent i = getContext().getPackageManager().getLaunchIntentForPackage(call.getString("pkg"));
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(i);
+                call.resolve();
+              } catch (Exception e) {
+                call.reject("cannot open");
+              }
+            }
+
+            @PluginMethod
+            public void getDocs(PluginCall call) {
+              boolean ok;
+              if (Build.VERSION.SDK_INT >= 30) ok = Environment.isExternalStorageManager();
+              else ok = getPermissionState("media") == PermissionState.GRANTED;
+              JSObject res = new JSObject();
+              JSArray arr = new JSArray();
+              res.put("granted", ok);
+              if (ok) {
+                Uri u = MediaStore.Files.getContentUri("external");
+                String[] cols = {MediaStore.Files.FileColumns._ID, MediaStore.Files.FileColumns.DISPLAY_NAME, MediaStore.Files.FileColumns.SIZE, MediaStore.Files.FileColumns.MIME_TYPE, MediaStore.Files.FileColumns.DATE_MODIFIED};
+                String sel = MediaStore.Files.FileColumns.MIME_TYPE + " IN ('application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/vnd.ms-powerpoint','application/vnd.openxmlformats-officedocument.presentationml.presentation','text/plain','text/csv')";
+                Cursor c = getContext().getContentResolver().query(u, cols, sel, null, MediaStore.Files.FileColumns.DATE_MODIFIED + " DESC");
+                if (c != null) {
+                  try {
+                    int n = 0;
+                    while (c.moveToNext() && n < 500) {
+                      JSObject o = new JSObject();
+                      o.put("id", c.getLong(0));
+                      o.put("name", c.getString(1));
+                      o.put("size", c.getLong(2));
+                      o.put("mime", c.getString(3));
+                      o.put("date", c.getLong(4));
+                      arr.put(o);
+                      n++;
+                    }
+                  } finally {
+                    c.close();
+                  }
+                }
+              }
+              res.put("items", arr);
+              call.resolve(res);
+            }
+            @PluginMethod
+            public void requestFilesAccess(PluginCall call) {
+              try {
+                String pkg = "package:" + getContext().getPackageName();
+                Intent i;
+                if (Build.VERSION.SDK_INT >= 30) i = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse(pkg));
+                else i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse(pkg));
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(i);
+                call.resolve();
+              } catch (Exception e) {
+                call.reject("cannot open settings");
+              }
+            }
+            @PluginMethod
+            public void openDoc(PluginCall call) {
+              try {
+                long id = call.getData().getLong("id");
+                String mime = call.getString("mime", "*/*");
+                Uri u = ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"), id);
+                Intent i = new Intent(Intent.ACTION_VIEW);
+                i.setDataAndType(u, mime);
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                getContext().startActivity(i);
+                call.resolve();
+              } catch (Exception e) {
+                call.reject("no app");
+              }
+            }
           }
           EOF
-          sed -i 's#<application#<uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/><uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/><uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/><application#' android/app/src/main/AndroidManifest.xml
+          sed -i 's#<application#<uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/><uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/><uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/><uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/><uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/><application#' android/app/src/main/AndroidManifest.xml
       - name: Build APK
         run: |
           cd android
