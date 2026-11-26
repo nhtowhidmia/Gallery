@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ত্রিমাত্রা গ্যালারি</title>
+<style>
+:root{--bg:#f3f1f8;--ink:#1b1630;--mute:#6d6785;--card:#fff;--acc:#6c4cff;--acc2:#00b8d9;--glow:rgba(108,76,255,.35);
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d0a1c;--ink:#f1eeff;--mute:#9a93b8;--card:#1a1533;--acc:#8d74ff;--acc2:#2ad4f0;--glow:rgba(141,116,255,.45);color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0d0a1c;--ink:#f1eeff;--mute:#9a93b8;--card:#1a1533;--acc:#8d74ff;--acc2:#2ad4f0;--glow:rgba(141,116,255,.45);color-scheme:dark}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0}
+body{background:radial-gradient(ellipse at 50% 30%,var(--glow),transparent 60%),var(--bg);color:var(--ink);font-family:"Hind Siliguri","Noto Sans Bengali",system-ui,sans-serif;display:flex;flex-direction:column;overflow:hidden;touch-action:pan-y}
+header{padding:16px 18px 6px;display:flex;justify-content:space-between;align-items:center}
+h1{font-size:22px;margin:0;font-weight:700}
+.count{color:var(--mute);font-size:13px}
+.add{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;border:0;border-radius:99px;padding:10px 18px;font:600 15px inherit;font-family:inherit;box-shadow:0 6px 20px var(--glow)}
+.tabs{display:flex;gap:8px;padding:8px 18px;overflow-x:auto}
+.tab{border:1px solid var(--mute);background:transparent;color:var(--ink);border-radius:99px;padding:6px 14px;font:500 14px inherit;font-family:inherit;white-space:nowrap;opacity:.7}
+.tab.on{background:var(--ink);color:var(--bg);border-color:var(--ink);opacity:1}
+#stage{flex:1;perspective:900px;perspective-origin:50% 40%;position:relative;display:flex;align-items:center;justify-content:center;cursor:grab;user-select:none;min-height:0}
+#ring{position:relative;width:150px;height:210px;transform-style:preserve-3d}
+.it{position:absolute;inset:0;border-radius:18px;overflow:hidden;background:var(--card);box-shadow:0 10px 30px rgba(0,0,0,.35);backface-visibility:visible;display:flex;align-items:center;justify-content:center;flex-direction:column;border:1px solid rgba(255,255,255,.15)}
+.it img,.it video{width:100%;height:100%;object-fit:cover;pointer-events:none}
+.it .badge{position:absolute;right:8px;top:8px;background:rgba(0,0,0,.55);color:#fff;border-radius:8px;padding:2px 8px;font-size:12px}
+.file{font-size:34px;font-weight:700;color:var(--acc)}
+.fname{font-size:12px;color:var(--mute);padding:6px 10px;text-align:center;word-break:break-all;max-height:60px;overflow:hidden}
+#empty{position:absolute;text-align:center;padding:24px;color:var(--mute);max-width:280px;line-height:1.6}
+#empty b{display:block;color:var(--ink);font-size:18px;margin-bottom:6px}
+footer{text-align:center;color:var(--mute);font-size:13px;padding:6px 0 14px}
+#view{position:fixed;inset:0;background:rgba(5,3,14,.94);display:none;flex-direction:column;align-items:center;justify-content:center;z-index:9;padding:env(safe-area-inset-top,0px) 12px env(safe-area-inset-bottom,0px)}
+#view.show{display:flex}
+#view img,#view video{max-width:100%;max-height:78%;border-radius:12px}
+#view .info{color:#fff;margin:14px;text-align:center;word-break:break-all}
+#view button{background:#fff;color:#111;border:0;border-radius:99px;padding:10px 22px;font:600 15px inherit;font-family:inherit;margin:4px}
+@media (prefers-reduced-motion:reduce){#ring{transition:none}}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>ত্রিমাত্রা গ্যালারি</h1><div class="count" id="count">কিছু যোগ করা হয়নি</div></div>
+  <button class="add" id="addBtn">+ যোগ করুন</button>
+</header>
+<div class="tabs" id="tabs">
+  <button class="tab on" data-f="all">সব</button>
+  <button class="tab" data-f="image">ছবি</button>
+  <button class="tab" data-f="video">ভিডিও</button>
+  <button class="tab" data-f="other">ফাইল</button>
+</div>
+<div id="stage"><div id="ring"></div>
+  <div id="empty"><b>গ্যালারি খালি</b>উপরের “যোগ করুন” চেপে ফোন থেকে ছবি, ভিডিও বা যেকোনো ফাইল বেছে নিন।</div>
+</div>
+<footer>ঘোরাতে আঙুল টানুন, খুলতে ছবিতে চাপ দিন</footer>
+<input type="file" id="pick" multiple accept="image/*,video/*,*/*" hidden>
+<div id="view"><div id="vbox"></div><div class="info" id="vinfo"></div><div><button id="vopen">ফাইল খুলুন</button><button id="vclose">বন্ধ করুন</button></div></div>
+<script>
+(function(){
+var items=[],filter="all",angle=0,vel=0,drag=false,moved=0,lastX=0,idle=0;
+var ring=document.getElementById("ring"),empty=document.getElementById("empty"),stage=document.getElementById("stage");
+function kind(f){return f.type.indexOf("image")===0?"image":f.type.indexOf("video")===0?"video":"other"}
+function ext(n){var m=n.split(".");return m.length>1?m.pop().slice(0,4).toUpperCase():"FILE"}
+function list(){return items.filter(function(i){return filter==="all"||i.kind===filter})}
+function render(){
+  var L=list();ring.innerHTML="";
+  empty.style.display=L.length?"none":"block";
+  document.getElementById("count").textContent=items.length?(items.length+" টি আইটেম"):"কিছু যোগ করা হয়নি";
+  var n=L.length,step=360/Math.max(n,1),R=Math.max(150,(80/Math.tan(Math.PI/Math.max(n,3)))*1.15);
+  L.forEach(function(it,i){
+    var d=document.createElement("div");d.className="it";
+    d.style.transform="rotateY("+(i*step)+"deg) translateZ("+R+"px)";
+    if(it.kind==="image"){d.innerHTML='<img src="'+it.url+'" alt="">'}
+    else if(it.kind==="video"){d.innerHTML='<video src="'+it.url+'#t=0.5" muted playsinline preload="metadata"></video><span class="badge">ভিডিও</span>'}
+    else{d.innerHTML='<div class="file">'+ext(it.name)+'</div><div class="fname"></div>';d.querySelector(".fname").textContent=it.name}
+    d._it=it;ring.appendChild(d);
+  });
+}
+function frame(){
+  if(!drag){angle+=vel;vel*=0.95;if(Math.abs(vel)<0.02){vel=0;idle++;if(idle>120&&list().length>1)angle+=0.12}}
+  ring.style.transform="translateZ(-60px) rotateX(-8deg) rotateY("+angle+"deg)";
+  requestAnimationFrame(frame);
+}
+stage.addEventListener("pointerdown",function(e){drag=true;moved=0;lastX=e.clientX;vel=0;idle=0;stage.setPointerCapture(e.pointerId)});
+stage.addEventListener("pointermove",function(e){if(!drag)return;var dx=e.clientX-lastX;lastX=e.clientX;moved+=Math.abs(dx);angle+=dx*0.45;vel=dx*0.45});
+stage.addEventListener("pointerup",function(e){drag=false;idle=0;
+  if(moved<8){var t=document.elementFromPoint(e.clientX,e.clientY);while(t&&!t._it&&t!==stage)t=t.parentNode;if(t&&t._it)openView(t._it)}});
+var cur=null,vbox=document.getElementById("vbox"),view=document.getElementById("view");
+function openView(it){
+  cur=it;vbox.innerHTML="";
+  if(it.kind==="image"){vbox.innerHTML='<img src="'+it.url+'" alt="">'}
+  else if(it.kind==="video"){vbox.innerHTML='<video src="'+it.url+'" controls autoplay playsinline></video>'}
+  else{vbox.innerHTML='<div class="file" style="font-size:64px">'+ext(it.name)+'</div>'}
+  document.getElementById("vinfo").textContent=it.name+" · "+(it.size/1048576).toFixed(2)+" MB";
+  view.classList.add("show");
+}
+function closeView(){view.classList.remove("show");vbox.innerHTML=""}
+document.getElementById("vclose").onclick=closeView;
+document.getElementById("vopen").onclick=function(){if(cur)window.open(cur.url,"_blank")};
+var pick=document.getElementById("pick");
+document.getElementById("addBtn").onclick=function(){pick.click()};
+pick.onchange=function(){
+  Array.prototype.forEach.call(pick.files,function(f){items.push({name:f.name,size:f.size,kind:kind(f),url:URL.createObjectURL(f)})});
+  pick.value="";render();
+};
+document.getElementById("tabs").addEventListener("click",function(e){
+  var b=e.target.closest(".tab");if(!b)return;
+  Array.prototype.forEach.call(this.children,function(c){c.classList.remove("on")});
+  b.classList.add("on");filter=b.dataset.f;angle=0;render();
+});
+var pal=[["#6c4cff","#00b8d9","#ff6ec4"],["#ff512f","#f09819","#ffd200"],["#0f2027","#2c5364","#3ad59f"],["#141e30","#243b55","#7f5cff"],["#11998e","#38ef7d","#0b486b"],["#ee0979","#ff6a00","#3a1c71"],["#1a2a6c","#b21f1f","#fdbb2d"],["#00c6ff","#0072ff","#a18cd1"]];
+pal.forEach(function(p,k){
+  var c=document.createElement("canvas");c.width=360;c.height=640;var x=c.getContext("2d");
+  var g=x.createLinearGradient(0,0,360,640);g.addColorStop(0,p[0]);g.addColorStop(1,p[1]);x.fillStyle=g;x.fillRect(0,0,360,640);
+  for(var i=0;i<5;i++){
+    var cx=(Math.sin(k*7+i*2.3)*.5+.5)*360,cy=(Math.cos(k*5+i*1.7)*.5+.5)*640,r=120+((k*37+i*53)%140);
+    var rg=x.createRadialGradient(cx,cy,0,cx,cy,r);rg.addColorStop(0,p[2]+"cc");rg.addColorStop(1,p[2]+"00");
+    x.fillStyle=rg;x.fillRect(0,0,360,640);
+  }
+  c.toBlob(function(b){
+    if(!b)return;
+    items.push({name:"ওয়ালপেপার "+(k+1)+".jpg",size:b.size,kind:"image",url:URL.createObjectURL(b)});
+    render();
+  },"image/jpeg",0.9);
+});
+render();frame();
+})();
+</script>
+</body>
+</html>
